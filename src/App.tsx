@@ -11,16 +11,12 @@ import { Transaction } from "@mysten/sui/transactions";
 
 type Log = { level: "info" | "error"; line: string };
 
-// Mysten testnet key servers (from issue #531).
+// Mysten testnet aggregator (decentralized committee) — same as the reporter's repo.
 const TESTNET_KEY_SERVERS: KeyServerConfig[] = [
   {
     objectId:
-      "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a001db7439ec8278106a7df5",
-    weight: 1,
-  },
-  {
-    objectId:
-      "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8",
+      "0xb012378c9f3799fb5b1a7083da74a4069e3c3f1c93de0b27212a5799ce1e1e98",
+    aggregatorUrl: "https://seal-aggregator-testnet.mystenlabs.com",
     weight: 1,
   },
 ];
@@ -94,14 +90,22 @@ export default function App() {
         });
         log("info", "fetchKeys returned without throwing");
       } catch (err: any) {
+        const msg: string = err?.message ?? String(err);
         const name = err?.name ?? err?.constructor?.name ?? "Error";
-        log("error", `fetchKeys threw ${name}: ${err?.message ?? err}`);
-        log(
-          "info",
-          name === "InvalidUserSignatureError"
-            ? "==> bug reproduced (see MystenLabs/seal#531)"
-            : "==> different error class — cert likely accepted by server",
-        );
+        log("error", `fetchKeys threw ${name}: ${msg}`);
+
+        const isInvalidSig = /signature on the session key is invalid/i.test(msg)
+          || name === "InvalidUserSignatureError";
+        const isNoAccess = /does not have access/i.test(msg)
+          || name === "NoAccessError";
+
+        if (isInvalidSig) {
+          log("info", "==> bug reproduced: key server rejected the certificate (see MystenLabs/seal#531)");
+        } else if (isNoAccess) {
+          log("info", "==> cert accepted by server; access policy denied (expected for bogus id)");
+        } else {
+          log("info", "==> unexpected error class");
+        }
       }
     } catch (e: any) {
       log("error", `setup failed: ${e?.message ?? e}`);

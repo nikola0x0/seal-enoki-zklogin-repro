@@ -24,22 +24,22 @@ npm run dev
 
 Open the dev server, connect a wallet, click **Run Seal session-key test**.
 
-## What you should see
+## Observed result (testnet, April 2026)
 
 ### Enoki (Google sign-in)
 
 ```
-certificate.signature.length = 1300
-fetchKeys threw InvalidUserSignatureError: ...
-==> bug reproduced
+certificate.signature.length = 1304
+fetchKeys threw Error: User signature on the session key is invalid
+==> bug reproduced: key server rejected the certificate
 ```
 
 ### Slush
 
 ```
 certificate.signature.length = 132
-fetchKeys threw NoAccessError: ...
-==> cert accepted, policy denied (expected — we pass a bogus id)
+fetchKeys threw Error: User does not have access to one or more of the requested keys
+==> cert accepted by server; access policy denied (expected for bogus id)
 ```
 
 The key observation: **the Slush run gets past certificate verification on the
