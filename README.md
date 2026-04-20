@@ -81,7 +81,7 @@ client it's given. With the JSON-RPC client it took the JSON-RPC path
 (Dev verifier on testnet, fails). Issue #531 was filed shortly after, on
 2026-04-08.
 
-So there are two real bugs here:
+Two issues are involved:
 
 1. **Sui** — `signature_verification_service.rs:178-182` selects the Dev
    zkLogin verifier on testnet while every other Sui code path uses Prod.
