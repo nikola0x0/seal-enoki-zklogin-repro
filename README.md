@@ -10,9 +10,9 @@ Enoki. It's in `MystenLabs/sui`'s gRPC `signature_verification_service`, which
 selects the *dev* zkLogin verifier on testnet while the corresponding JSON-RPC
 endpoint selects *Prod*. Enoki proofs are issued for Prod, so the gRPC route
 rejects valid signatures. Seal's key server delegates verification through the
-gRPC route, so users see `InvalidUserSignatureError`. Details below.
+gRPC route, so users see `InvalidUserSignatureError`.
 
-## Pinned versions (latest at the time of writing)
+## Pinned versions
 
 | Package                  | Version  |
 | ------------------------ | -------- |
@@ -56,64 +56,52 @@ fetchKeys threw Error: User does not have access to one or more of the requested
 ==> cert accepted by server; access policy denied (expected for bogus id).
 ```
 
-The decisive line is `sui_verifyZkLoginSignature: success:true` for Enoki —
-Sui's own JSON-RPC verifier confirms the signature is valid for that address,
-yet the Seal key server (which uses a different verification path) returns
-`InvalidSignature`.
+## Regression timeline
 
-## Investigation chain
+The Sui gRPC bug has been latent since the v2 services were stabilized
+([Sept 2025, sui#23540](https://github.com/MystenLabs/sui/pull/23540)) — but it
+wasn't reachable from Seal until **2026-03-20**, when Seal commit
+[`a5174db`](https://github.com/MystenLabs/seal/commit/a5174db)
+("[chore] update sui pointers", PR #519) swapped the client passed into
+`verify_personal_message_signature`:
 
-1. **Symptom**: Seal `fetchKeys` returns `InvalidUserSignatureError` (HTTP 403,
-   `error: "InvalidSignature"`) for Enoki users; succeeds (or fails with
-   `NoAccessError`, depending on the access policy) for Slush.
+```diff
+ verify_personal_message_signature(
+     cert.signature.clone(),
+     msg.as_bytes(),
+     cert.user,
+-    Some(self.sui_rpc_client.sui_client().clone()),    // JSON-RPC-backed client
++    Some(self.sui_rpc_client.sui_grpc_client()),       // gRPC client
+ )
+```
 
-2. **Initial wrong hypothesis (PR #516 alias check)**: Seal's
-   `crates/key-server/src/server.rs:352` short-circuits with `InvalidSignature`
-   when `has_address_aliases(cert.user)` returns `true`. Verified empirically
-   via `check-alias.mjs` (snapshot self-test passes; both Enoki and Slush
-   addresses return `notExists` for the derived `AliasKey<address>` object).
-   So the alias check is NOT firing — it's not the cause.
+For zkLogin signatures, the SDK helper picks its verification route from the
+client it's given. With the JSON-RPC client it took the JSON-RPC path
+(Prod verifier on testnet, works). With the gRPC client it takes the gRPC path
+(Dev verifier on testnet, fails). Issue #531 was filed shortly after, on
+2026-04-08.
 
-3. **Real verifier path**: Seal calls
-   `sui_sdk::verify_personal_message_signature::verify_personal_message_signature`,
-   which for `GenericSignature::ZkLoginAuthenticator` delegates to Sui gRPC's
-   `signature_verification_client.verify_signature`.
+So there are two real bugs here:
 
-4. **Cross-check**: Calling Sui's JSON-RPC `sui_verifyZkLoginSignature`
-   (`crates/sui-json-rpc/src/read_api.rs`) directly with the same cert
-   signature and message returns `{success: true}`.
+1. **Sui** — `signature_verification_service.rs:178-182` selects the Dev
+   zkLogin verifier on testnet while every other Sui code path uses Prod.
+   Latent since Sept 2025.
+2. **Seal** — the 2026-03-20 client swap activated bug #1 in production
+   without zkLogin test coverage to catch it.
 
-5. **Divergence located**:
-
-   **Sui JSON-RPC (`read_api.rs:1178-1182`) — Prod on testnet, works:**
-   ```rust
-   let zklogin_env_native = match self.state.get_chain_identifier()...chain() {
-       Chain::Mainnet | Chain::Testnet => ZkLoginEnv::Prod,
-       _ => ZkLoginEnv::Test,
-   };
-   ```
-
-   **Sui gRPC (`signature_verification_service.rs:178-182`) — Dev on testnet, fails:**
-   ```rust
-   let mut zklogin_verifier = match service.chain_id().chain() {
-       Chain::Mainnet => ZkloginVerifier::new_mainnet(),
-       Chain::Testnet | Chain::Unknown => ZkloginVerifier::new_dev(),
-   };
-   ```
-
-   Same input, opposite environment. Enoki proofs are issued for Prod, so the
-   gRPC's Dev verifier rejects them.
+Either fix restores Enoki users: reverting the Seal one-liner is fast;
+fixing the Sui gRPC verifier is the correct long-term change.
 
 ## Files
 
-- `src/App.tsx` — the repro UI: builds a Seal `SessionKey`, calls
-  `getCertificate()`, hits Sui's JSON-RPC `sui_verifyZkLoginSignature`
-  directly for cross-check, then calls `sealClient.fetchKeys` to surface the
-  Seal-side error.
-- `check-alias.mjs` — Node script that derives the `AliasKey<address>`
-  derived-object ID for both test addresses and queries Sui testnet for them.
-  Verifies the alias-check hypothesis is not the cause. Includes a
-  self-test against the snapshot in `crates/sui-types/src/derived_object.rs`.
+- `src/App.tsx` — the repro UI. Builds a Seal `SessionKey`, cross-checks
+  `cert.signature` directly against Sui's JSON-RPC `sui_verifyZkLoginSignature`,
+  then calls `sealClient.fetchKeys`.
+- `check-alias.mjs` — Node script that rules out the
+  [PR #516](https://github.com/MystenLabs/seal/pull/516) alias check as the
+  cause (derives `AliasKey<address>` and queries testnet; neither test
+  address has one). Includes a self-test against the snapshot in
+  `crates/sui-types/src/derived_object.rs`.
 
 ## Source citations
 
