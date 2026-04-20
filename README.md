@@ -61,6 +61,15 @@ SNARK verifier loaded with the wrong verifying key (Dev vs Prod). The Slush
 row shows gRPC itself is fine for non-zkLogin signatures, isolating the issue
 to the zkLogin verifier selection.
 
+The two verifying keys in
+[`sui-rust-sdk/crates/sui-crypto/src/zklogin/verify.rs`](https://github.com/MystenLabs/sui-rust-sdk/blob/main/crates/sui-crypto/src/zklogin/verify.rs)
+are hardcoded to different bn254 curve points, and the dev one is explicitly
+commented `"This is based on a local setup and should not use in production."`
+A Groth16 proof generated against one verifying key is mathematically
+guaranteed to fail against the other — which is exactly what the gRPC
+handler's `new_dev()` selection produces for any Enoki/Prod-issued proof on
+testnet.
+
 ## Regression timeline
 
 The Sui gRPC bug has been latent since the v2 services were stabilized
