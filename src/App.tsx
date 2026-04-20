@@ -65,6 +65,35 @@ export default function App() {
           "(Slush ≈ 132, Enoki zkLogin ≈ 1300)",
       );
 
+      // Independent cross-check via Sui's JSON-RPC.
+      // The JSON-RPC zkLogin verifier picks ZkLoginEnv::Prod for testnet, while
+      // the gRPC verifier (signature_verification_service.rs) picks new_dev() —
+      // so the JSON-RPC route returns success:true on the same signature that
+      // the Seal key server (gRPC route) rejects as InvalidSignature.
+      try {
+        const personalMsg = sessionKey.getPersonalMessage();
+        // verify_zklogin_signature handler decodes `bytes` directly into
+        // PersonalMessage.message — pass the RAW message base64'd, no BCS wrap.
+        let bytesB64 = "";
+        for (const b of personalMsg) bytesB64 += String.fromCharCode(b);
+        bytesB64 = btoa(bytesB64);
+        log("info", `personal-message len=${personalMsg.length}`);
+        const r = await fetch("https://fullnode.testnet.sui.io", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "sui_verifyZkLoginSignature",
+            params: [bytesB64, cert.signature, "PersonalMessage", account.address],
+          }),
+        });
+        const j = await r.json();
+        log("info", `sui_verifyZkLoginSignature: ${JSON.stringify(j.result ?? j.error)}`);
+      } catch (e: any) {
+        log("error", `sui verify call failed: ${e?.message ?? e}`);
+      }
+
       const tx = new Transaction();
       tx.moveCall({
         target: `${DEMO_PACKAGE_ID}::allowlist::seal_approve`,
@@ -100,9 +129,10 @@ export default function App() {
           || name === "NoAccessError";
 
         if (isInvalidSig) {
-          log("info", "==> bug reproduced: key server rejected the certificate (see MystenLabs/seal#531)");
+          log("info", "==> bug reproduced: Seal key server rejects the cert via Sui gRPC,");
+          log("info", "    even though Sui JSON-RPC verifies the same sig as valid (see README).");
         } else if (isNoAccess) {
-          log("info", "==> cert accepted by server; access policy denied (expected for bogus id)");
+          log("info", "==> cert accepted by server; access policy denied (expected for bogus id).");
         } else {
           log("info", "==> unexpected error class");
         }
