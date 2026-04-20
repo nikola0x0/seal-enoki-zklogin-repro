@@ -5,12 +5,12 @@ Minimal reproduction and root-cause investigation for
 `InvalidUserSignatureError` when fetching Seal keys with an Enoki/zkLogin
 wallet, while the same flow succeeds with a standard browser wallet.
 
-**Short version of the conclusion** — the bug is **not** in Seal and **not** in
-Enoki. It's in `MystenLabs/sui`'s gRPC `signature_verification_service`, which
-selects the *dev* zkLogin verifier on testnet while the corresponding JSON-RPC
-endpoint selects *Prod*. Enoki proofs are issued for Prod, so the gRPC route
-rejects valid signatures. Seal's key server delegates verification through the
-gRPC route, so users see `InvalidUserSignatureError`.
+**Summary** — the failure originates in `MystenLabs/sui`'s gRPC
+`signature_verification_service`, which selects the *dev* zkLogin verifier on
+testnet while the corresponding JSON-RPC endpoint selects *Prod*. Enoki proofs
+are issued for Prod, so the gRPC route rejects valid signatures. Seal's key
+server delegates zkLogin verification through the gRPC route, which is why the
+error surfaces as `InvalidUserSignatureError` on the client.
 
 ## Pinned versions
 
