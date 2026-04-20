@@ -38,11 +38,9 @@ wallet (Slush, Suiet, etc.) to see the contrast.
 ### Enoki (Google sign-in) — repro
 
 ```
-address: 0xfde98f8c4b37cbf7078514e34196013aa7577f78ba11ca0c0fd75a4340f51575
-SessionKey.create OK
-certificate.signature.length = 1300 (Slush ≈ 132, Enoki zkLogin ≈ 1300)
-personal-message len=191
-sui_verifyZkLoginSignature: {"success":true,"errors":[]}
+certificate.signature.length = 1300
+JSON-RPC  sui_verifyZkLoginSignature: {"success":true,"errors":[]}
+gRPC      core.verifyZkLoginSignature:    {"success":false,"errors":["signature error: Groth16 proof verify failed"]}
 fetchKeys threw Error: User signature on the session key is invalid
 ==> bug reproduced
 ```
@@ -51,10 +49,17 @@ fetchKeys threw Error: User signature on the session key is invalid
 
 ```
 certificate.signature.length = 132
-sui_verifyZkLoginSignature: {"success":false,"errors":["Endpoint only supports zkLogin signature"]}
+JSON-RPC  sui_verifyZkLoginSignature: {"code":-32602,"message":"Endpoint only supports zkLogin signature"}
+gRPC      core.verifyZkLoginSignature:    {"success":true,"errors":[]}
 fetchKeys threw Error: User does not have access to one or more of the requested keys
 ==> cert accepted by server; access policy denied (expected for bogus id).
 ```
+
+The same `cert.signature` is accepted by Sui's JSON-RPC verifier and rejected
+by Sui's gRPC verifier with `Groth16 proof verify failed` — the symptom of a
+SNARK verifier loaded with the wrong verifying key (Dev vs Prod). The Slush
+row shows gRPC itself is fine for non-zkLogin signatures, isolating the issue
+to the zkLogin verifier selection.
 
 ## Regression timeline
 

@@ -65,19 +65,18 @@ export default function App() {
           "(Slush ≈ 132, Enoki zkLogin ≈ 1300)",
       );
 
-      // Independent cross-check via Sui's JSON-RPC.
-      // The JSON-RPC zkLogin verifier picks ZkLoginEnv::Prod for testnet, while
-      // the gRPC verifier (signature_verification_service.rs) picks new_dev() —
-      // so the JSON-RPC route returns success:true on the same signature that
-      // the Seal key server (gRPC route) rejects as InvalidSignature.
+      // Cross-check the same signature against Sui's two zkLogin verifier
+      // routes. The JSON-RPC handler picks ZkLoginEnv::Prod for testnet, the
+      // gRPC handler picks new_dev() — so the same cert should accept on one
+      // and reject on the other if that selection is what's failing.
+      const personalMsg = sessionKey.getPersonalMessage();
+      let bytesB64 = "";
+      for (const b of personalMsg) bytesB64 += String.fromCharCode(b);
+      bytesB64 = btoa(bytesB64);
+      log("info", `personal-message len=${personalMsg.length}`);
+
+      // (1) JSON-RPC route
       try {
-        const personalMsg = sessionKey.getPersonalMessage();
-        // verify_zklogin_signature handler decodes `bytes` directly into
-        // PersonalMessage.message — pass the RAW message base64'd, no BCS wrap.
-        let bytesB64 = "";
-        for (const b of personalMsg) bytesB64 += String.fromCharCode(b);
-        bytesB64 = btoa(bytesB64);
-        log("info", `personal-message len=${personalMsg.length}`);
         const r = await fetch("https://fullnode.testnet.sui.io", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -89,9 +88,26 @@ export default function App() {
           }),
         });
         const j = await r.json();
-        log("info", `sui_verifyZkLoginSignature: ${JSON.stringify(j.result ?? j.error)}`);
+        log("info", `JSON-RPC  sui_verifyZkLoginSignature: ${JSON.stringify(j.result ?? j.error)}`);
       } catch (e: any) {
-        log("error", `sui verify call failed: ${e?.message ?? e}`);
+        log("error", `JSON-RPC verify call failed: ${e?.message ?? e}`);
+      }
+
+      // (2) gRPC route — same inputs, but goes through SuiGrpcClient's
+      // signatureVerificationService.verifySignature, which is what
+      // sui_sdk::verify_personal_message_signature uses, which is what the
+      // Seal key server invokes. If this fails while (1) succeeds, the gRPC
+      // handler's verifier selection is the cause.
+      try {
+        const res = await (client as any).core.verifyZkLoginSignature({
+          bytes: bytesB64,
+          signature: cert.signature,
+          intentScope: "PersonalMessage",
+          address: account.address,
+        });
+        log("info", `gRPC      core.verifyZkLoginSignature:    ${JSON.stringify(res)}`);
+      } catch (e: any) {
+        log("error", `gRPC verify call failed: ${e?.message ?? e}`);
       }
 
       const tx = new Transaction();
